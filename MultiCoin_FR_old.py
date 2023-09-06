@@ -8,26 +8,11 @@ import pandas as pd
 today = str(datetime.now())
 today = today.split(" ")[0].replace("-", "")
 
-def fetch_funding_rate(symbol, market, unix_start, unix_end):
-    output = []
-    query_from = unix_start
-    query_to = unix_end
-    prev_query_from = query_from
-    while query_from < unix_end:
-        data = market.fetchFundingRateHistory(symbol, limit=1000, since=query_from, 
-                                                params={'endTime': query_to})
-        output.extend(data)
-        t = pd.DataFrame(data)
-        query_from = t['timestamp'].max()
-        if prev_query_from == query_from: break
-        prev_query_from = query_from
-    df = pd.DataFrame(output)
-    df = df.sort_values('timestamp')
-    df.drop_duplicates(subset = ['timestamp'],inplace=True)
-    return df
-
-
-def unix_convert(start, end):
+def pagination_funding_rate(symbol, start, end):
+    busdm = ccxt.binanceusdm()
+    bybit = ccxt.bybit()
+    okx = ccxt.okx()
+    
     # convert datetime string to unix timestamp
     str_start = str(start)
     dt = datetime.strptime(str_start, '%Y%m%d')  # parse the date from string
@@ -35,42 +20,93 @@ def unix_convert(start, end):
     str_end = str(end)
     dt = datetime.strptime(str_end, '%Y%m%d')  # parse the date from string
     unix_end = int(time.mktime(dt.timetuple())) * 1000 + 64800000# convert to Unix timestamp
-    return unix_start, unix_end
-
-
-def pagination_funding_rate(symbol, start, end):
-    binance = ccxt.binanceusdm()
-    bybit = ccxt.bybit()
-    okx = ccxt.okx()
     
-    unix_start, unix_end = unix_convert(start, end)
+    # fetch binance funding rate
+    output_bn = []
+    query_from = unix_start
+    query_to = unix_end
+    prev_query_from = query_from
+    while query_from < unix_end:
+        data_bn = busdm.fetchFundingRateHistory(symbol, limit=1000, since=query_from, 
+                                                params={'endTime': query_to})
+        output_bn.extend(data_bn)
+        t = pd.DataFrame(data_bn)
+        query_from = t['timestamp'].max()
+        if prev_query_from == query_from: break
+        prev_query_from = query_from
+    df_bn = pd.DataFrame(output_bn)
+    df_bn = df_bn.sort_values('timestamp')
+    df_bn.drop_duplicates(subset = ['timestamp'],inplace=True)
     
-    # fetch funding rate for three market, note that bybit can only auto load two months data
-    df_binance = fetch_funding_rate(symbol, binance, unix_start, unix_end)
+    # fetch bybit funding rate
+    output_bb = []
+    query_from = unix_start
+    query_to = unix_end
+    prev_query_from = query_from
+    while query_from < unix_end:
+        data_bb = bybit.fetchFundingRateHistory(symbol, limit=1000, since=query_from, 
+                                                params={'endTime': query_to})
+        output_bb.extend(data_bb)
+        t = pd.DataFrame(data_bb)
+        query_from = t['timestamp'].max()
+        if prev_query_from == query_from: break
+        prev_query_from = query_from
+    df_bb = pd.DataFrame(output_bb)
+    df_bb = df_bb.sort_values('timestamp')
+    df_bb.drop_duplicates(subset = ['timestamp'],inplace=True)
     
-    df_bybit_1 = fetch_funding_rate(symbol, bybit, unix_start, unix_end)
-    bybit_earliest = min(df_binance['datetime']).split("T")[0].replace("-", "")
-    bybit_latest = min(df_bybit_1['datetime']).split("T")[0].replace("-", "")
-    bybit_new_start, bybit_new_end = unix_convert(bybit_earliest, bybit_latest)
-    df_bybit_2 = fetch_funding_rate(symbol, bybit, bybit_new_start, bybit_new_end)
-    df_bybit = pd.concat([df_bybit_1, df_bybit_2], ignore_index=True, sort=False)
-    df_bybit.drop_duplicates(subset = ['timestamp'],inplace=True)
-    df_bybit = df_bybit.sort_values(by='timestamp', ascending=True).reindex()
-    
-    df_okx = fetch_funding_rate(symbol, okx, unix_start, unix_end)
+    # fetch okx funding rate
+    output_okx = []
+    query_from = unix_start
+    query_to = unix_end
+    prev_query_from = query_from
+    while query_from < unix_end:
+        data_okx = okx.fetchFundingRateHistory(symbol, limit=1000, since=query_from, 
+                                               params={'endTime': query_to})
+        output_okx.extend(data_okx)
+        t = pd.DataFrame(data_okx)
+        query_from = t['timestamp'].max()
+        if prev_query_from == query_from: break
+        prev_query_from = query_from
+    df_okx = pd.DataFrame(output_okx)
+    df_okx = df_okx.sort_values('timestamp')
+    df_okx.drop_duplicates(subset = ['timestamp'],inplace=True)
     
     # merge dataframe for binance, bybit and okx platforms
     df_okx.rename(columns={'fundingRate': 'okx_fundingRate'}, inplace=True)
-    df_bybit.rename(columns={'fundingRate': 'bybit_fundingRate'}, inplace=True)
-    df_binance.rename(columns={'fundingRate': 'binance_fundingRate'}, inplace=True)
-    df_binance['timestamp'] = df_binance['timestamp'].apply(lambda x: round(x, -3))
+    df_bb.rename(columns={'fundingRate': 'bybit_fundingRate'}, inplace=True)
+    df_bn.rename(columns={'fundingRate': 'binance_fundingRate'}, inplace=True)
+    df_bn['timestamp'] = df_bn['timestamp'].apply(lambda x: round(x, -3))
     
-    # merge dataframes for three markets into one
-    df_binance = df_binance.merge(df_bybit[['timestamp', 'bybit_fundingRate']], on='timestamp', how='left')
-    df_binance = df_binance.merge(df_okx[['timestamp', 'okx_fundingRate']], on='timestamp', how='left')
-    df_binance = df_binance[['symbol', 'timestamp', 'datetime', 'okx_fundingRate', 
-                    'binance_fundingRate', 'bybit_fundingRate']]
-    return df_binance
+    col_num = min(len(df_bb), len(df_okx), len(df_bn))
+    df_bn = df_bn.iloc[-col_num:]
+    df_bn.reset_index(inplace=True)
+    df_bb = df_bb.iloc[-col_num:]
+    df_bb.reset_index(inplace=True)
+    df_okx = df_okx.iloc[-col_num:]
+    df_okx.reset_index(inplace=True)
+    
+    if df_bn['timestamp'].equals(df_bb['timestamp']) and \
+       df_bn['timestamp'].equals(df_okx['timestamp']):
+        df_okx = df_okx.join(df_bn['binance_fundingRate'])
+        df_okx = df_okx.join(df_bb['bybit_fundingRate'])
+        print('Merge Success')
+    else:
+        raise ValueError('Merge failed with initial end date, need to extend an extra day')
+        # print('Merge failed with initial end date, now extending an extra day')
+        # revised_end = datetime.strptime(today, '%Y%m%d')
+        # revised_end += timedelta(days=1)
+        # revised_end = str(revised_end)
+        # revised_end = revised_end.split(" ")[0].replace("-", "")
+        # df = pagination_funding_rate(symbol, start, revised_end)
+        # df = df[['symbol', 'timestamp', 'datetime', 'okx_fundingRate', 
+        #              'binance_fundingRate', 'bybit_fundingRate']] 
+        # return df  
+        
+    df_okx = df_okx[['symbol', 'timestamp', 'datetime', 'okx_fundingRate', 
+                     'binance_fundingRate', 'bybit_fundingRate']]    
+    return df_okx
+
 
 def pagination_funding_rate_net_SMA(symbol, start, end, long_okx=True):
     okx_df = pagination_funding_rate(symbol, start, end)
@@ -134,4 +170,14 @@ def pagination_funding_rate_net_SMA(symbol, start, end, long_okx=True):
     okx_df['bybit_fundingRate'] = okx_df['bybit_fundingRate'] * 3 * 365
 
     return okx_df
-    
+
+# def bulk_query(start, end, symbols, long_okx=True, net_SMA=False):
+#     dataframes = []
+#     for i in range(1, len(symbols) + 1):
+#         dataframe_name = 'df' + str(i)
+#         if net_SMA == False:
+#             dataframe_name = pagination_funding_rate(symbols[i - 1], start, end).copy()
+#         else:
+#             dataframe_name = pagination_funding_rate_net_SMA(symbols[i - 1], start, end).copy()
+#         dataframes.append(dataframe_name)
+#     return dataframes
